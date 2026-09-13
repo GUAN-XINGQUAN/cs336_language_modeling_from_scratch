@@ -107,7 +107,7 @@ def train_bpe(
 
 
 if __name__ == "__main__":
-    input_path = "./sample.txt"
+    input_path = "./data/sample.txt"
     vocab_size = 264
     special_tokens = ["<|endoftext|>", "<|pad|>"]
     vocab, merges = train_bpe(input_path, vocab_size, special_tokens)

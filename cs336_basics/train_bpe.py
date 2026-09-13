@@ -1,6 +1,10 @@
 from collections import defaultdict
 import os, re, regex
 import multiprocessing as mp
+import pickle
+import time
+import tracemalloc
+
 from cs336_basics.pretokenization_example import find_chunk_boundaries
 
 VOCAB_SIZE = 256
@@ -154,26 +158,33 @@ def train_bpe(
     #     word_freq[token_ids] += 1
 
     # 3 to 6. Build word frequency dictionary in parallel using multiprocessing
-    word_freq = build_word_freq_parallel(input_path, special_tokens, num_processes=mp.cpu_count())
+    word_freq = build_word_freq_parallel(input_path, special_tokens, num_processes=4)
+    pair_counts = defaultdict(int)
+    pair_to_words = defaultdict(set)
+    for k_ids, v_freq in word_freq.items():
+        for idx in range(len(k_ids) - 1):
+            pair = (k_ids[idx], k_ids[idx + 1])
+            pair_counts[pair] += v_freq
+            pair_to_words[pair].add(k_ids)
 
     # 7. repeatedly: count pairs, choose best pair, create new vocabulary entry, replace pair
     merges = []
     num_merges = vocab_size - len(vocab)
     for _ in range(num_merges):
         # Count adjacent token-ID pairs
-        pair_counts = defaultdict(int)
+        # pair_counts = defaultdict(int)
 
         # for ids in tokenized_corpus:
         #     for i in range(len(ids) - 1):
         #         pair = (ids[i], ids[i + 1])
         #         pair_counts[pair] = pair_counts.get(pair, 0) + 1
         # Optimized version using word frequency dict
-        for k_ids, v_freq in word_freq.items():
-            for idx in range(len(k_ids) - 1):
-                pair = (k_ids[idx], k_ids[idx + 1])
-                pair_counts[pair] += v_freq
-
-
+        # for k_ids, v_freq in word_freq.items():
+        #     for idx in range(len(k_ids) - 1):
+        #         pair = (k_ids[idx], k_ids[idx + 1])
+        #         pair_counts[pair] += v_freq
+        # Further optimization: only update affected pairs based on the last merge
+        
         if not pair_counts:
             break
         
@@ -216,11 +227,38 @@ def train_bpe(
         # for i in range(len(tokenized_corpus)):
         #     tokenized_corpus[i] = apply_merge(tokenized_corpus[i], best_pair[0], best_pair[1], new_id)
         # Optimized version using word frequency dict
-        new_word_freq = defaultdict(int)
-        for k_ids, v_freq in word_freq.items():
-            new_ids = apply_merge(k_ids, best_pair[0], best_pair[1], new_id)
-            new_word_freq[new_ids] += v_freq
-        word_freq = new_word_freq
+        # new_word_freq = defaultdict(int)
+        # for k_ids, v_freq in word_freq.items():
+        #     new_ids = apply_merge(k_ids, best_pair[0], best_pair[1], new_id)
+        #     new_word_freq[new_ids] += v_freq
+        # word_freq = new_word_freq
+
+        # only process words that contain the best pair
+        affected_words = pair_to_words[best_pair]
+        for word in list(affected_words):
+            freq = word_freq[word]
+            # Remove old pair contributions
+            for i in range(len(word) - 1):
+                pair = (word[i], word[i + 1])
+                pair_counts[pair] -= freq
+                if pair_counts[pair] == 0:
+                    del pair_counts[pair]
+                pair_to_words[pair].discard(word)
+            
+            # Merge
+            new_word = apply_merge(word, best_pair[0], best_pair[1], new_id)
+            del word_freq[word]
+
+            # Add new word
+            word_freq[new_word] += freq
+
+            # Add new pair contributions
+            for i in range(len(new_word) - 1):
+                pair = (new_word[i], new_word[i + 1])
+
+                pair_counts[pair] += freq
+                pair_to_words[pair].add(new_word)
+
         next_id += 1
 
     # 8. return vocab, merges
@@ -228,13 +266,59 @@ def train_bpe(
 
 
 if __name__ == "__main__":
-    input_path = "./sample.txt"
-    vocab_size = 264
-    special_tokens = ["<|endoftext|>", "<|pad|>"]
-    vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
-    print("Vocabulary:")
-    for token_id, token_bytes in vocab.items():
-        print(f"{token_id}: {token_bytes}")
-    print("\nMerges:")
-    for merge in merges:
-        print(merge)
+    # # My own dev test
+    # input_path = "./data/sample.txt"
+    # vocab_size = 264
+    # special_tokens = ["<|endoftext|>", "<|pad|>"]
+    # vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
+    # print("Vocabulary:")
+    # for token_id, token_bytes in vocab.items():
+    #     print(f"{token_id}: {token_bytes}")
+    # print("\nMerges:")
+    # for merge in merges:
+    #     print(merge)
+
+    # Assignment train
+    input_path = "./data/TinyStoriesV2-GPT4-valid.txt"
+    vocab_size = 10_000
+    special_tokens = ["<|endoftext|>"]
+
+    # Start profiling
+    tracemalloc.start()
+    start_time = time.time()
+
+    vocab, merges = train_bpe(
+        input_path,
+        vocab_size,
+        special_tokens,
+    )
+
+    end_time = time.time()
+
+    # Memory usage
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    # Print results
+    print(f"Training time: {end_time - start_time:.2f} seconds")
+    print(f"Peak memory: {peak / 1024 / 1024:.2f} MB")
+
+    # Find longest token
+    learned_tokens = list(vocab.values())[256 + len(special_tokens):]
+    longest_token = max(learned_tokens, key=len)
+
+    print(f"Longest token: {longest_token}")
+    print(f"Length: {len(longest_token)} bytes")
+    print(
+        f"Decoded: {longest_token.decode('utf-8', errors='replace')}"
+    )
+
+    # Save vocabulary
+    with open("tinystories_vocab.pkl", "wb") as f:
+        pickle.dump(vocab, f)
+    
+    # Save merges
+    with open("tinystories_merges.pkl", "wb") as f:
+        pickle.dump(merges, f)
+
+    print("Saved vocabulary and merges.")
