@@ -1,9 +1,7 @@
-import (
-    os,
-    re,
-    regex
-)
+from collections import defaultdict
+import os, re, regex
 import multiprocessing as mp
+
 
 VOCAB_SIZE = 256
 
@@ -65,22 +63,33 @@ def train_bpe(
         pre_tokenized_pieces.extend(tokens)
 
     # 6. convert pieces to sequences of byte token IDs
-    tokenized_corpus = []
+    # tokenized_corpus = []
+    # for token in pre_tokenized_pieces:
+    #     token_ids = list(token.encode("utf-8"))
+    #     tokenized_corpus.append(token_ids)
+    # Optimized version using word frequency dict
+    word_freq = defaultdict(int)
     for token in pre_tokenized_pieces:
-        token_ids = list(token.encode("utf-8"))
-        tokenized_corpus.append(token_ids)
+        token_ids = tuple(token.encode("utf-8"))
+        word_freq[token_ids] += 1
 
     # 7. repeatedly: count pairs, choose best pair, create new vocabulary entry, replace pair
     merges = []
     num_merges = vocab_size - len(vocab)
     for _ in range(num_merges):
         # Count adjacent token-ID pairs
-        pair_counts = {}
+        pair_counts = defaultdict(int)
 
-        for ids in tokenized_corpus:
-            for i in range(len(ids) - 1):
-                pair = (ids[i], ids[i + 1])
-                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        # for ids in tokenized_corpus:
+        #     for i in range(len(ids) - 1):
+        #         pair = (ids[i], ids[i + 1])
+        #         pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        # Optimized version using word frequency dict
+        for k_ids, v_freq in word_freq.items():
+            for idx in range(len(k_ids) - 1):
+                pair = (k_ids[idx], k_ids[idx + 1])
+                pair_counts[pair] += v_freq
+
 
         if not pair_counts:
             break
@@ -112,8 +121,6 @@ def train_bpe(
         )
 
         # Replace pair
-        for i in range(len(tokenized_corpus)):
-            tokenized_corpus[i] = apply_merge(tokenized_corpus[i], best_pair[0], best_pair[1], new_id)
         # for ids in tokenized_corpus:
         #     i = 0
         #     while i < len(ids) - 1:
@@ -122,6 +129,15 @@ def train_bpe(
         #             i += 1
         #         else:
         #             i += 1
+        # refactor to use standalone function for merge
+        # for i in range(len(tokenized_corpus)):
+        #     tokenized_corpus[i] = apply_merge(tokenized_corpus[i], best_pair[0], best_pair[1], new_id)
+        # Optimized version using word frequency dict
+        new_word_freq = defaultdict(int)
+        for k_ids, v_freq in word_freq.items():
+            new_ids = apply_merge(k_ids, best_pair[0], best_pair[1], new_id)
+            new_word_freq[new_ids] += v_freq
+        word_freq = new_word_freq
         next_id += 1
 
     # 8. return vocab, merges
