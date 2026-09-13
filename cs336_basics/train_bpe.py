@@ -1,7 +1,7 @@
 from collections import defaultdict
 import os, re, regex
 import multiprocessing as mp
-
+from cs336_basics.pretokenization_example import find_chunk_boundaries
 
 VOCAB_SIZE = 256
 
@@ -15,9 +15,9 @@ def build_word_freq_chunk(
     word_freq = defaultdict(int)
 
     # 3. read the chunk of the file
-    with open(file_path, "r") as f:
+    with open(file_path, "rb") as f:
         f.seek(start)
-        text = f.read(end - start)
+        text = f.read(end - start).decode("utf-8", errors="ignore")
 
     # 4. split around special tokens
     if special_tokens:
@@ -27,7 +27,7 @@ def build_word_freq_chunk(
         pieces = [text]
     
     # 5. GPT-2 pre-tokenization
-        GPT2_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    GPT2_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     pre_tokenized_pieces = []
     for piece in pieces:
         tokens = regex.findall(GPT2_PATTERN, piece)
@@ -56,13 +56,21 @@ def build_word_freq_parallel(
         raise ValueError(f"num_processes must be between 1 and {mp.cpu_count()}")
     
     # multiprocessing tool
-    chunk_size = file_size // num_processes
+    # chunk_size = file_size // num_processes
     
+    # args = []
+    # for chunk_idx in range(num_processes):
+    #     start_idx = chunk_idx * chunk_size
+    #     end_idx = start_idx + chunk_size if chunk_idx < num_processes - 1 else file_size
+    #     args.append((file_path, start_idx, end_idx, special_tokens))
+    # Optimize the chunk by using safe split boundaries to avoid splitting special tokens
+    with open(file_path, "rb") as f:
+        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
     args = []
-    for chunk_idx in range(num_processes):
-        start_idx = chunk_idx * chunk_size
-        end_idx = start_idx + chunk_size if chunk_idx < num_processes - 1 else file_size
-        args.append((file_path, start_idx, end_idx, special_tokens))
+    for chunk_idx in range(len(boundaries) - 1):
+        start_idx = boundaries[chunk_idx]
+        end_idx = boundaries[chunk_idx + 1]
+        args.append((file_path, start_idx, end_idx, special_tokens)) 
 
     with mp.Pool(processes=num_processes) as pool:
         results = pool.starmap(
