@@ -1,34 +1,14 @@
-import (
-    os,
-    re,
-    regex
-)
-import multiprocessing as mp
+import re
+import regex
 
 VOCAB_SIZE = 256
 
-
-
-def apply_merge(token_ids: tuple[int, ...], prev: int, next: int, new_id: int) -> tuple[int, ...]:
-    """
-    Given a sequence of token IDs, replace all occurrences of the pair (prev, next) with new_id.
-    """
-    result = []
-    idx = 0
-    while idx < len(token_ids):
-        if idx + 1 < len(token_ids) and token_ids[idx] == prev and token_ids[idx + 1] == next:
-            result.append(new_id)
-            idx += 2
-        else:
-            result.append(token_ids[idx])
-            idx += 1
-    return tuple(result)
 
 def train_bpe(
     input_path: str, 
     vocab_size: int, 
     special_tokens: list[str]
-) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     Train a BPE tokenizer on the input file and return the vocabulary and merges.
     """
@@ -112,16 +92,14 @@ def train_bpe(
         )
 
         # Replace pair
-        for i in range(len(tokenized_corpus)):
-            tokenized_corpus[i] = apply_merge(tokenized_corpus[i], best_pair[0], best_pair[1], new_id)
-        # for ids in tokenized_corpus:
-        #     i = 0
-        #     while i < len(ids) - 1:
-        #         if (ids[i], ids[i + 1]) == best_pair:
-        #             ids[i:i + 2] = [new_id]
-        #             i += 1
-        #         else:
-        #             i += 1
+        for ids in tokenized_corpus:
+            i = 0
+            while i < len(ids) - 1:
+                if (ids[i], ids[i + 1]) == best_pair:
+                    ids[i:i + 2] = [new_id]
+                    i += 1
+                else:
+                    i += 1
         next_id += 1
 
     # 8. return vocab, merges
